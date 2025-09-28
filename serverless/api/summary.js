@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { connectDB } from './_lib/db.js';
 import { Message } from './_lib/models.js';
-import { summarize } from './_lib/gemini.js';
+import { summarize } from './_lib/gemini.mjs';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
