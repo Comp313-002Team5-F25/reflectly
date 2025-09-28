@@ -1,9 +1,6 @@
-// client/src/components/Hero.tsx
 import { motion, useScroll, useTransform } from 'framer-motion';
 
-type HeroProps = {
-  subtitle?: string;
-};
+type HeroProps = { subtitle?: string };
 
 export default function Hero({ subtitle }: HeroProps) {
   const { scrollY } = useScroll();
@@ -13,17 +10,21 @@ export default function Hero({ subtitle }: HeroProps) {
 
   return (
     <section className="relative overflow-hidden h-[68vh] gradient-blob">
-      <motion.div style={{ y: y2 }} className="absolute -top-20 right-0 w-[50vw] h-[50vh] rounded-full blur-3xl opacity-40 bg-accent/30" />
-      <motion.div style={{ y: y1 }} className="absolute -left-20 top-20 w-[40vw] h-[40vh] rounded-full blur-3xl opacity-30 bg-amber/30" />
+      {/* put blobs behind & make them non-interactive */}
+      <motion.div
+        style={{ y: y2 }}
+        className="absolute -top-20 right-0 w-[50vw] h-[50vh] rounded-full blur-3xl opacity-40 bg-accent/30 pointer-events-none -z-10"
+      />
+      <motion.div
+        style={{ y: y1 }}
+        className="absolute -left-20 top-20 w-[40vw] h-[40vh] rounded-full blur-3xl opacity-30 bg-amber/30 pointer-events-none -z-10"
+      />
 
       <div className="relative max-w-6xl mx-auto h-full flex items-center px-6">
         <motion.div style={{ scale }} className="glass rounded-xl2 p-8 shadow-soft">
           <h1 className="text-4xl md:text-6xl font-semibold tracking-tight">Reflectly</h1>
 
-          {/* subtitle under the title if provided */}
-          {subtitle && (
-            <p className="mt-2 text-mist/70 text-sm">{subtitle}</p>
-          )}
+          {subtitle && <p className="mt-2 text-mist/70 text-sm">{subtitle}</p>}
 
           <p className="mt-4 max-w-2xl text-mist/80 text-lg">
             A calming space to be heard. We paraphrase your thoughts and gently ask one question to help you go deeper.

@@ -19,6 +19,25 @@ const GEMINI = (process.env.GEMINI_API_KEY || '').trim();
 
 if (!process.env.MONGODB_URI) { console.error('❌ Missing MONGODB_URI'); process.exit(1); }
 if (!GEMINI) { console.error('❌ Missing GEMINI_API_KEY'); process.exit(1); }
+// BEFORE routes/middleware
+const allowedOrigins = (process.env.CORS_ORIGIN || '*')
+  .split(',')
+  .map(s => s.trim().replace(/\/+$/, '')) // strip trailing slashes
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin.replace(/\/+$/, ''))) {
+      return cb(null, true);
+    }
+    return cb(new Error(`CORS blocked: ${origin}`));
+  },
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  maxAge: 86400,
+}));
+app.options('*', cors());
+
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(compression());
@@ -56,14 +75,34 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+app.get('/api/diag/gemini', async (_req, res) => {
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(GEMINI);
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const model = genAI.getGenerativeModel({ model: modelName });
+    const r = await model.generateContent('ping');
+    const text = r?.response?.text?.() || '';
+    res.json({ ok: true, model: modelName, sample: text.slice(0, 80) });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      message: String(e?.message || e),
+      status: e?.status ?? null,
+      statusText: e?.statusText ?? null,
+      details: e?.errorDetails ?? null,
+    });
+  }
+});
+
 app.post('/api/chat', async (req, res) => {
   const parse = ChatSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: 'BAD_REQUEST' });
-  const { sessionId, text, tone='neutral', intent='go_deep' } = parse.data;
 
+  const { sessionId, text, tone='neutral', intent='go_deep' } = parse.data;
   const t0 = Date.now();
+
   try {
-    // light safety screen
     const crisis = /suicide|kill myself|harm myself|overdose|end it/i.test(text);
     await Message.create({ sessionId, role: 'user', content: text });
 
@@ -89,23 +128,38 @@ app.post('/api/chat', async (req, res) => {
       bubble += `Q: ${followUp}\n\n`;
     }
     if (tags?.length) bubble += '— ' + tags.join(' · ');
-
     await Message.create({ sessionId, role: 'ai', content: bubble.trim() });
 
     res.json({ paraphrase, followUp, actionSteps, tags, latencyMs: Date.now() - t0 });
   } catch (err) {
-    console.error(err);
-    await Message.create({ sessionId, role:'ai', content:'[fallback] I had trouble responding. Want to try again?' });
-    res.json({
+    console.error('[Gemini error]', {
+      name: err?.name,
+      status: err?.status,
+      statusText: err?.statusText,
+      message: String(err?.message || err),
+      errorDetails: err?.errorDetails,
+    });
+
+    try {
+      await Message.create({ sessionId, role:'ai', content:'[fallback] I had trouble responding. Want to try again?' });
+    } catch {}
+
+    res.status(200).json({
       paraphrase:'I might be having trouble responding right now.',
       followUp:'Would you like to try again or share more in a different way?',
       actionSteps:[],
       tags:['Transparency'],
       latencyMs: Date.now()-t0,
-      error:true
+      error:true,
+      provider: 'google',
+      providerStatus: err?.status ?? null,
+      providerStatusText: err?.statusText ?? null,
+      providerMessage: String(err?.message || ''),
     });
   }
 });
+
+
 
 app.post('/api/summary', async (req, res) => {
   const SessionSchema = z.object({ sessionId: z.string().min(6) });
