@@ -44,7 +44,20 @@ app.use(compression());
 app.use(cors({ origin: (process.env.CORS_ORIGIN || '*').split(',') }));
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimit({ windowMs: 60_000, max: 60 }));
-
+// --- NEW: quick Gemini diag
+app.get('/api/diag/gemini', async (req, res) => {
+  try {
+    const keySet = Boolean((process.env.GEMINI_API_KEY || '').trim());
+    const modelHint = process.env.GEMINI_MODEL || '(auto)';
+    // ping listModels from the server to verify key in this runtime:
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${process.env.GEMINI_API_KEY}`);
+    const ok = r.ok;
+    const models = ok ? (await r.json()).models?.slice(0, 6).map(m => m.name) : [];
+    res.json({ ok: true, keySet, modelHint, listOk: ok, models });
+  } catch (e) {
+    res.status(500).json({ ok:false, error: String(e?.message || e) });
+  }
+});
 mongoose.connect(process.env.MONGODB_URI, { dbName: 'reflectly' })
   .then(() => console.log('Mongo connected'))
   .catch(err => { console.error('Mongo error', err); process.exit(1); });
@@ -132,31 +145,33 @@ app.post('/api/chat', async (req, res) => {
 
     res.json({ paraphrase, followUp, actionSteps, tags, latencyMs: Date.now() - t0 });
   } catch (err) {
-    console.error('[Gemini error]', {
-      name: err?.name,
-      status: err?.status,
-      statusText: err?.statusText,
-      message: String(err?.message || err),
-      errorDetails: err?.errorDetails,
-    });
+  console.error('[Gemini error]', {
+    name: err?.name,
+    status: err?.status,
+    statusText: err?.statusText,
+    message: String(err?.message || err),
+    errorDetails: err?.errorDetails,
+    raw: err?.raw?.slice?.(0, 200)
+  });
 
-    try {
-      await Message.create({ sessionId, role:'ai', content:'[fallback] I had trouble responding. Want to try again?' });
-    } catch {}
+  await Message.create({ sessionId, role:'ai',
+    content:'[fallback] I had trouble responding. Want to try again?'
+  });
 
-    res.status(200).json({
-      paraphrase:'I might be having trouble responding right now.',
-      followUp:'Would you like to try again or share more in a different way?',
-      actionSteps:[],
-      tags:['Transparency'],
-      latencyMs: Date.now()-t0,
-      error:true,
-      provider: 'google',
-      providerStatus: err?.status ?? null,
-      providerStatusText: err?.statusText ?? null,
-      providerMessage: String(err?.message || ''),
-    });
-  }
+  res.status(200).json({
+    paraphrase:'I might be having trouble responding right now.',
+    followUp:'Would you like to try again or share more in a different way?',
+    actionSteps:[],
+    tags:['Transparency'],
+    latencyMs: Date.now()-t0,
+    error:true,
+    provider:'google',
+    providerStatus: err?.status ?? null,
+    providerStatusText: err?.statusText ?? null,
+    providerMessage: String(err?.message || ''),
+  });
+}
+
 });
 
 
