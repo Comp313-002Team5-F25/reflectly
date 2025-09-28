@@ -1,6 +1,5 @@
 // client/src/lib/api.ts
-const BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
-
+const BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '');
 
 export async function sendChat(
   sessionId: string,

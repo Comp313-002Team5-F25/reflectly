@@ -1,8 +1,11 @@
 import { connectDB } from './_lib/db.js';
 import { Message } from './_lib/models.js';
 import { runTurn } from './_lib/gemini.mjs';
+import { applyCors } from './_lib/cors.js';
 
 export default async function handler(req, res) {
+     if (applyCors(req, res)) return;   // <-- handle OPTIONS and set headers
+
   if (req.method !== 'POST') return res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
   const { sessionId, text, tone='neutral', intent='go_deep' } = req.body || {};
   if (!sessionId || !text) return res.status(400).json({ error: 'BAD_REQUEST' });
