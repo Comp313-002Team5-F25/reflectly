@@ -1,6 +1,6 @@
 // client/src/lib/api.ts
 const BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '');
-
+await fetch(`${BASE}/api/chat`, { /* ... */ });
 export async function sendChat(
   sessionId: string,
   text: string,
