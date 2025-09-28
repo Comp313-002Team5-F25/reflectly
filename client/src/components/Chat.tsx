@@ -1,15 +1,18 @@
-// client/src/components/Chat.tsx
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Send, FileText } from 'lucide-react';
-import { sendChat, endSession, getSummary } from '../lib/api';
+import { sendChat, endSession, getSummary, type Summary } from '../lib/api';
 
 type Role = 'user' | 'ai';
-
-interface Msg { role: 'user'|'ai'; content: string; meta?: { tags?: string[]; steps?: string[] } }
-interface Msg { role: Role; content: string; }
 type Tone = 'calm' | 'neutral' | 'upbeat';
-type Intent = 'go_deep'|'solve';
+type Intent = 'go_deep' | 'solve';
+
+type Msg = {
+  role: Role;
+  content: string;
+  meta?: { tags?: string[]; steps?: string[] };
+};
+
 function newSessionId() {
   return 's_' + Math.random().toString(36).slice(2, 10);
 }
@@ -24,8 +27,10 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
   const [latencies, setLatencies] = useState<number[]>([]);
   const [errors, setErrors] = useState(0);
   const [loading, setLoading] = useState(false);
+
   const [summaryOpen, setSummaryOpen] = useState(false);
-  const [summary, setSummary] = useState<{summary:string[]; nextPrompt:string}|null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
+
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { localStorage.setItem('sessionId', sessionId); }, [sessionId]);
@@ -33,10 +38,10 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [msgs.length]);
 
-   async function onSend() {
+  async function onSend() {
     const content = text.trim();
     if (!content || loading) return;
-    setMsgs(m => [...m, { role:'user', content }]);
+    setMsgs(m => [...m, { role: 'user', content }]);
     setText(''); setLoading(true);
     const t0 = performance.now();
     try {
@@ -46,18 +51,21 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
       setLatencies(a => [...a, latency]); setTurns(n => n + 1);
       if (res?.error) setErrors(e => e + 1);
 
-      // construct bubble client-side as well (server already stores a combined string)
       let ai = (res?.paraphrase || '') + '\n\n';
       if (intent === 'solve' && Array.isArray(res?.actionSteps) && res.actionSteps.length) {
-        ai += 'Next steps:\n' + res.actionSteps.map((s:string)=>`• ${s}`).join('\n') + '\n\n';
+        ai += 'Next steps:\n' + res.actionSteps.map((s: string) => `• ${s}`).join('\n') + '\n\n';
       }
       if (res?.followUp) ai += `Q: ${res.followUp}\n\n`;
       const tags = Array.isArray(res?.tags) ? res.tags : [];
       if (tags.length) ai += '— ' + tags.join(' · ');
-      setMsgs(m => [...m, { role:'ai', content: ai.trim(), meta: { tags, steps: res?.actionSteps || [] } }]);
+
+      setMsgs(m => [
+        ...m,
+        { role: 'ai', content: ai.trim(), meta: { tags, steps: res?.actionSteps || [] } }
+      ]);
     } catch {
       setErrors(e => e + 1);
-      setMsgs(m => [...m, { role:'ai', content:'[fallback] I had trouble responding. Try again?' }]);
+      setMsgs(m => [...m, { role: 'ai', content: '[fallback] I had trouble responding. Try again?' }]);
     } finally {
       setLoading(false);
     }
@@ -66,7 +74,9 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
   // end session on unload / 10 min idle
   useEffect(() => {
     const handler = () => {
-      const avg = latencies.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0;
+      const avg = latencies.length
+        ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
+        : 0;
       endSession(sessionId, { turns, avgLatencyMs: avg, errorCount: errors }).catch(() => {});
       localStorage.removeItem('sessionId');
       setSessionId(newSessionId());
@@ -79,11 +89,14 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
 
   async function onSummary() {
     try {
-      const s = await getSummary(sessionId);
+      const s = await getSummary(sessionId); // typed as Summary
       setSummary(s);
-      setSummaryOpen(true);
     } catch {
-      setSummary({ summary: ['(Couldn’t generate a summary right now)'], nextPrompt: 'What feels most important to talk about next?' });
+      setSummary({
+        summary: ['(Couldn’t generate a summary right now)'],
+        nextPrompt: 'What feels most important to talk about next?'
+      });
+    } finally {
       setSummaryOpen(true);
     }
   }
