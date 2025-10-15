@@ -1,15 +1,24 @@
-import { applyCors } from '../../../_lib/cors.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export default async function handler(req, res) {
-  if (applyCors(req, res)) return;
   try {
     const key = (process.env.GEMINI_API_KEY || '').trim();
-    const hint = process.env.GEMINI_MODEL || '(auto)';
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${key}`);
-    const ok = r.ok;
-    const models = ok ? (await r.json())?.models?.slice(0, 8).map(m => m.name) : [];
-    res.status(200).json({ ok: true, keySet: Boolean(key), listOk: ok, modelHint: hint, models });
+    if (!key) return res.status(500).json({ ok:false, error:'NO_GEMINI_KEY' });
+
+    const genAI = new GoogleGenerativeAI(key);
+    const models = await fetch('https://generativelanguage.googleapis.com/v1/models?key=' + encodeURIComponent(key))
+      .then(r => r.json())
+      .catch(() => null);
+
+    res.json({
+      ok: true,
+      sdk: '@google/generative-ai',
+      modelEnv: process.env.GEMINI_MODEL || null,
+      cors: process.env.CORS_ORIGIN || null,
+      modelsCount: Array.isArray(models?.models) ? models.models.length : null,
+      has25flash: !!models?.models?.some(m => m.name === 'models/gemini-2.5-flash')
+    });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    res.status(500).json({ ok:false, error: String(e?.message || e) });
   }
 }

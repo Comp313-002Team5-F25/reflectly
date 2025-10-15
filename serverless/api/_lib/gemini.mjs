@@ -1,8 +1,6 @@
-// serverless/api/_lib/gemini.mjs
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { SYSTEM_PROMPT, JSON_CONTRACT } from './prompt.js';
 
-// Keep to models that ListModels showed for your key
 const CANDIDATES = [
   (process.env.GEMINI_MODEL || '').trim(),
   'gemini-2.5-flash',
@@ -13,49 +11,22 @@ const CANDIDATES = [
   'gemini-2.0-flash-lite-001'
 ].filter(Boolean);
 
-const TURN_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    paraphrase: { type: 'string' },
-    followUp: { type: 'string' },
-    actionSteps: { type: 'array', items: { type: 'string' }, maxItems: 3 },
-    tags: { type: 'array', items: { type: 'string' }, maxItems: 4 }
-  },
-  required: ['paraphrase']
-};
-
-const SUMMARY_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    summary: { type: 'array', items: { type: 'string' }, maxItems: 5 },
-    nextPrompt: { type: 'string' },
-    actionSteps: { type: 'array', items: { type: 'string' }, maxItems: 3 },
-    tags: { type: 'array', items: { type: 'string' }, maxItems: 4 }
-  },
-  required: ['summary']
-};
-
-function parseJson(text = '') {
-  const cleaned = (text || '').replace(/```(?:json)?/g, '').trim();
+function parseJsonBlock(text = '') {
+  const cleaned = String(text).replace(/```(?:json)?/g, '').trim();
   const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}');
   if (s < 0 || e < 0) throw new Error('PARSE_JSON_NOT_FOUND');
   return JSON.parse(cleaned.slice(s, e + 1));
 }
 
-async function callOnce(genAI, model, prompt, schema) {
-  const m = genAI.getGenerativeModel({
-    model,
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: schema // safe now; if it ever complains, comment this line out
-    }
-  });
+async function callOnce(genAI, model, prompt) {
+  const m = genAI.getGenerativeModel({ model });
   const res = await m.generateContent(prompt);
-  return parseJson(res?.response?.text?.() ?? '');
+  return parseJsonBlock(res?.response?.text?.() ?? '');
 }
 
 export async function runTurn(apiKey, { text, history, tone = 'neutral', intent = 'go_deep' }) {
   if (!apiKey) throw new Error('NO_GEMINI_KEY');
+
   const genAI = new GoogleGenerativeAI(apiKey.trim());
   const historyText = (history || []).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
 
@@ -70,13 +41,13 @@ export async function runTurn(apiKey, { text, history, tone = 'neutral', intent 
     'USER:',
     text,
     '---',
-    JSON_CONTRACT
+    JSON_CONTRACT,
   ].join('\n');
 
   let lastErr;
   for (const model of CANDIDATES) {
     try {
-      const json = await callOnce(genAI, model, prompt, TURN_JSON_SCHEMA);
+      const json = await callOnce(genAI, model, prompt);
       return {
         paraphrase: json.paraphrase ?? '',
         followUp: json.followUp ?? '',
@@ -86,7 +57,7 @@ export async function runTurn(apiKey, { text, history, tone = 'neutral', intent 
       };
     } catch (err) {
       const msg = String(err?.message || err);
-      if (/Not Found|not found for API version|not supported/.test(msg)) {
+      if (/Not Found|not found for API version|not supported/i.test(msg)) {
         lastErr = err; continue;
       }
       throw err;
@@ -97,11 +68,14 @@ export async function runTurn(apiKey, { text, history, tone = 'neutral', intent 
 
 export async function summarize(apiKey, transcriptMsgs = []) {
   if (!apiKey) throw new Error('NO_GEMINI_KEY');
+
   const genAI = new GoogleGenerativeAI(apiKey.trim());
-  const transcript = (transcriptMsgs || []).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+  const transcript = (transcriptMsgs || [])
+    .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+    .join('\n');
 
   const prompt = `
-Apply listening criteria and produce ≤5 bullets + 1 next prompt; optional ≤3 action steps.
+Apply CIA listening and produce ≤5 bullets + 1 next prompt; optional ≤3 steps.
 
 TRANSCRIPT:
 ${transcript}
@@ -118,7 +92,8 @@ Return ONLY JSON:
   let lastErr;
   for (const model of CANDIDATES) {
     try {
-      const json = await callOnce(genAI, model, prompt, SUMMARY_JSON_SCHEMA);
+      const res = await genAI.getGenerativeModel({ model }).generateContent(prompt);
+      const json = parseJsonBlock(res?.response?.text?.() ?? '');
       return {
         summary: Array.isArray(json.summary) ? json.summary.slice(0, 5) : [],
         nextPrompt: json.nextPrompt ?? '',
@@ -128,7 +103,7 @@ Return ONLY JSON:
       };
     } catch (err) {
       const msg = String(err?.message || err);
-      if (/Not Found|not found for API version|not supported/.test(msg)) {
+      if (/Not Found|not found for API version|not supported/i.test(msg)) {
         lastErr = err; continue;
       }
       throw err;
@@ -137,5 +112,5 @@ Return ONLY JSON:
   throw lastErr || new Error('NO_WORKING_GEMINI_MODEL');
 }
 
-// backwards-compat names used by your endpoints
+// Back-compat names your handlers import:
 export { runTurn as paraphraseAndProbe, summarize as summarizeSession };
