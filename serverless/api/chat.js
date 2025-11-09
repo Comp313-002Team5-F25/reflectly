@@ -1,62 +1,76 @@
-import { applyCors, readJson } from '../_lib/cors.js';
-import { runTurn } from '../_lib/gemini.mjs';
+// serverless/api/chat.js
+import { z } from 'zod';
+import { applyCors, readJson } from './_lib/cors.js';
+import { connectDB } from './_lib/db.js';
+import { Message } from './_lib/models.js';
+import { paraphraseAndProbe } from './_lib/gemini.mjs';
 
 export default async function handler(req, res) {
+  // CORS + OPTIONS short-circuit
   if (applyCors(req, res)) return;
+
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
-    return;
+    return res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
   }
 
-  const t0 = Date.now();
+  // ⬅ this was the missing bit
+  const body = await readJson(req);
+
+  const Schema = z.object({
+    sessionId: z.string().min(6),
+    text: z.string().min(1).max(2000),
+    tone: z.enum(['calm', 'neutral', 'upbeat']).optional(),
+    intent: z.enum(['go_deep', 'solve']).optional(),
+  });
+
+  const parse = Schema.safeParse(body);
+  if (!parse.success) return res.status(400).json({ error: 'BAD_REQUEST' });
+
   try {
-    const body = await readJson(req);
-    const sessionId = String(body.sessionId || '').trim();
-    const text = String(body.text || '').trim();
-    const tone = body.tone || 'neutral';
-    const intent = body.intent || 'go_deep';
+    await connectDB();
+    const GEMINI = (process.env.GEMINI_API_KEY || '').trim();
+    if (!GEMINI) return res.status(500).json({ error: 'NO_GEMINI_KEY' });
 
-    if (!sessionId || !text) {
-      res.status(400).json({ error: 'BAD_REQUEST' });
-      return;
-    }
+    const { sessionId, text, tone = 'neutral', intent = 'go_deep' } = parse.data;
 
-    // basic safety
-    const crisis = /suicide|kill myself|harm myself|overdose|end it/i.test(text);
-    if (crisis) {
-      const paraphrase = "It sounds like you're going through intense pain.";
-      const followUp = "Would you be willing to contact immediate support? I can share options.";
-      const tags = ["Empathic Calibration","Transparency"];
-      res.status(200).json({ paraphrase, followUp, actionSteps: [], tags, latencyMs: Date.now()-t0 });
-      return;
-    }
+    // store user msg
+    await Message.create({ sessionId, role: 'user', content: text });
 
-    const out = await runTurn((process.env.GEMINI_API_KEY||'').trim(), {
-      text, history: [], tone, intent
+    // fetch short history
+    const recent = await Message.find({ sessionId })
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .lean();
+    const history = recent.reverse().map(m => ({ role: m.role, content: m.content }));
+
+    // call Gemini
+    const out = await paraphraseAndProbe(GEMINI, text, history, { tone, intent });
+
+    // store ai msg (pretty bubble)
+    await Message.create({
+      sessionId,
+      role: 'ai',
+      content: [
+        out.paraphrase,
+        intent === 'solve' && out.actionSteps?.length
+          ? '\n\nNext steps:\n' + out.actionSteps.map(s => '• ' + s).join('\n')
+          : '',
+        out.followUp ? `\n\nQ: ${out.followUp}` : '',
+        out.tags?.length ? `\n\n— ${out.tags.join(' · ')}` : '',
+      ]
+        .join('')
+        .trim(),
     });
 
-    // one combined bubble is built client-side; we just return parts
-    res.status(200).json({ ...out, latencyMs: Date.now() - t0 });
+    return res.json(out);
   } catch (err) {
-    console.error('[Gemini error]', {
-      name: err?.name,
-      status: err?.status,
-      statusText: err?.statusText,
-      message: String(err?.message || err),
-      errorDetails: err?.errorDetails,
-      raw: err?.raw?.slice?.(0, 200),
-    });
-    res.status(200).json({
+    console.error('[chat]', err);
+    return res.status(200).json({
       paraphrase: 'I might be having trouble responding right now.',
       followUp: 'Would you like to try again or share more in a different way?',
       actionSteps: [],
       tags: ['Transparency'],
-      latencyMs: Date.now() - t0,
       error: true,
-      provider: 'google',
-      providerStatus: err?.status ?? null,
-      providerStatusText: err?.statusText ?? null,
-      providerMessage: String(err?.message || ''),
     });
   }
 }

@@ -1,3 +1,4 @@
+// client/src/components/Chat.tsx
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Send, FileText } from 'lucide-react';
@@ -10,7 +11,16 @@ type Intent = 'go_deep' | 'solve';
 type Msg = {
   role: Role;
   content: string;
-  meta?: { tags?: string[]; steps?: string[] };
+  meta?: {
+    tags?: string[];
+    steps?: string[];
+    debug?: {
+      provider?: string | null;
+      providerStatus?: number | null;
+      providerStatusText?: string | null;
+      providerMessage?: string | null;
+    };
+  };
 };
 
 function newSessionId() {
@@ -18,8 +28,8 @@ function newSessionId() {
 }
 
 export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
-  const [sessionId, setSessionId] = useState(() =>
-    localStorage.getItem('sessionId') || newSessionId()
+  const [sessionId, setSessionId] = useState(
+    () => localStorage.getItem('sessionId') || newSessionId()
   );
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [text, setText] = useState('');
@@ -33,68 +43,130 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
 
   const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { localStorage.setItem('sessionId', sessionId); }, [sessionId]);
+  // keep session id
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+    localStorage.setItem('sessionId', sessionId);
+  }, [sessionId]);
+
+  // auto scroll
+  useEffect(() => {
+    listRef.current?.scrollTo({
+      top: listRef.current.scrollHeight,
+      behavior: 'smooth',
+    });
   }, [msgs.length]);
 
   async function onSend() {
     const content = text.trim();
     if (!content || loading) return;
-    setMsgs(m => [...m, { role: 'user', content }]);
-    setText(''); setLoading(true);
+
+    // show user msg immediately
+    setMsgs((m) => [...m, { role: 'user', content }]);
+    setText('');
+    setLoading(true);
+
     const t0 = performance.now();
     try {
       const res = await sendChat(sessionId, content, tone, intent);
       const t1 = performance.now();
-      const latency = res?.latencyMs ?? (t1 - t0);
-      setLatencies(a => [...a, latency]); setTurns(n => n + 1);
-      if (res?.error) setErrors(e => e + 1);
+      const latency = res?.latencyMs ?? t1 - t0;
 
-      let ai = (res?.paraphrase || '') + '\n\n';
+      setLatencies((a) => [...a, latency]);
+      setTurns((n) => n + 1);
+      if (res?.error) setErrors((e) => e + 1);
+
+      // build AI bubble
+      let ai = (res?.paraphrase || '').trim();
       if (intent === 'solve' && Array.isArray(res?.actionSteps) && res.actionSteps.length) {
-        ai += 'Next steps:\n' + res.actionSteps.map((s: string) => `• ${s}`).join('\n') + '\n\n';
+        ai += '\n\nNext steps:\n' + res.actionSteps.map((s: string) => `• ${s}`).join('\n');
       }
-      if (res?.followUp) ai += `Q: ${res.followUp}\n\n`;
+      if (res?.followUp) {
+        ai += `\n\nQ: ${res.followUp}`;
+      }
       const tags = Array.isArray(res?.tags) ? res.tags : [];
-      if (tags.length) ai += '— ' + tags.join(' · ');
+      if (tags.length) {
+        ai += `\n\n— ${tags.join(' · ')}`;
+      }
 
-      setMsgs(m => [
+      // attach debug from server (only shown if error)
+      const debug =
+        res?.error
+          ? {
+              provider: (res as any).provider ?? null,
+              providerStatus: (res as any).providerStatus ?? null,
+              providerStatusText: (res as any).providerStatusText ?? null,
+              providerMessage: (res as any).providerMessage ?? null,
+            }
+          : undefined;
+
+      setMsgs((m) => [
         ...m,
-        { role: 'ai', content: ai.trim(), meta: { tags, steps: res?.actionSteps || [] } }
+        {
+          role: 'ai',
+          content: ai || '[empty response]',
+          meta: {
+            tags,
+            steps: res?.actionSteps || [],
+            debug,
+          },
+        },
       ]);
-    } catch {
-      setErrors(e => e + 1);
-      setMsgs(m => [...m, { role: 'ai', content: '[fallback] I had trouble responding. Try again?' }]);
+    } catch (err) {
+      console.error('[chat] client error', err);
+      setErrors((e) => e + 1);
+      setMsgs((m) => [
+        ...m,
+        {
+          role: 'ai',
+          content: '[fallback] I had trouble responding. Try again?',
+          meta: {
+            debug: {
+              providerMessage: String(err),
+            },
+          },
+        },
+      ]);
     } finally {
       setLoading(false);
     }
   }
 
-  // end session on unload / 10 min idle
+  // end session on unload / idle
   useEffect(() => {
     const handler = () => {
       const avg = latencies.length
         ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
         : 0;
-      endSession(sessionId, { turns, avgLatencyMs: avg, errorCount: errors }).catch(() => {});
+      endSession(sessionId, {
+        turns,
+        avgLatencyMs: avg,
+        errorCount: errors,
+      }).catch(() => {});
       localStorage.removeItem('sessionId');
       setSessionId(newSessionId());
-      setMsgs([]); setTurns(0); setLatencies([]); setErrors(0);
+      setMsgs([]);
+      setTurns(0);
+      setLatencies([]);
+      setErrors(0);
     };
+
     window.addEventListener('beforeunload', handler);
     const idle = setTimeout(handler, 10 * 60 * 1000);
-    return () => { window.removeEventListener('beforeunload', handler); clearTimeout(idle); };
+
+    return () => {
+      window.removeEventListener('beforeunload', handler);
+      clearTimeout(idle);
+    };
   }, [sessionId, turns, latencies, errors]);
 
   async function onSummary() {
     try {
-      const s = await getSummary(sessionId); // typed as Summary
+      const s = await getSummary(sessionId);
       setSummary(s);
     } catch {
       setSummary({
         summary: ['(Couldn’t generate a summary right now)'],
-        nextPrompt: 'What feels most important to talk about next?'
+        nextPrompt: 'What feels most important to talk about next?',
       });
     } finally {
       setSummaryOpen(true);
@@ -107,8 +179,11 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
         <header className="flex items-center justify-between gap-4 mb-3">
           <h2 className="text-xl font-medium">Conversation</h2>
           <div className="flex items-center gap-2">
-            <button onClick={onSummary} className="px-3 py-2 rounded-xl2 border border-white/15 hover:bg-white/5 text-sm inline-flex items-center gap-2">
-              <FileText size={14}/> Summary
+            <button
+              onClick={onSummary}
+              className="px-3 py-2 rounded-xl2 border border-white/15 hover:bg-white/5 text-sm inline-flex items-center gap-2"
+            >
+              <FileText size={14} /> Summary
             </button>
             <span className="text-xs text-mist/70">session: {sessionId}</span>
           </div>
@@ -116,47 +191,88 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
 
         <div ref={listRef} className="h-[48vh] overflow-y-auto space-y-3 pr-1">
           {msgs.map((m, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .25 }}
-              className={`rounded-xl2 p-3 whitespace-pre-wrap ${m.role==='user' ? 'bg-white/5' : 'bg-accent/10 border border-accent/20'}`}>
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className={`rounded-xl2 p-3 whitespace-pre-wrap ${
+                m.role === 'user' ? 'bg-white/5' : 'bg-accent/10 border border-accent/20'
+              }`}
+            >
               <div className="text-[11px] uppercase tracking-wide opacity-60 mb-1">{m.role}</div>
               <div>{m.content}</div>
+              {/* tiny debug line if server said error */}
+              {m.meta?.debug?.providerMessage && (
+                <div className="mt-2 text-[10px] text-red-200/70">
+                  debug: {m.meta.debug.provider} {m.meta.debug.providerStatus}{' '}
+                  {m.meta.debug.providerStatusText} — {m.meta.debug.providerMessage}
+                </div>
+              )}
             </motion.div>
           ))}
 
           {loading && (
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .25 }}
-              className="rounded-xl2 p-3 bg-accent/5 border border-accent/10">
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="rounded-xl2 p-3 bg-accent/5 border border-accent/10"
+            >
               <div className="text-[11px] uppercase tracking-wide opacity-60 mb-1">ai</div>
               <div className="animate-pulse">Reflectly is thinking…</div>
             </motion.div>
           )}
         </div>
 
-        <form onSubmit={(e)=>{e.preventDefault(); onSend();}} className="mt-4 flex items-center gap-3">
-          <input value={text} onChange={e=>setText(e.target.value)} placeholder="Type a thought…"
-                 className="flex-1 glass rounded-xl2 px-4 py-3 outline-none focus:ring-2 focus:ring-accent/40" disabled={loading}/>
-          <button type="submit" disabled={loading}
-            className="px-4 py-3 rounded-xl2 bg-accent text-ink hover:opacity-90 transition inline-flex items-center gap-2 disabled:opacity-50">
-            <Send size={16}/> Send
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSend();
+          }}
+          className="mt-4 flex items-center gap-3"
+        >
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Type a thought…"
+            className="flex-1 glass rounded-xl2 px-4 py-3 outline-none focus:ring-2 focus:ring-accent/40"
+            disabled={loading}
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="px-4 py-3 rounded-xl2 bg-accent text-ink hover:opacity-90 transition inline-flex items-center gap-2 disabled:opacity-50"
+          >
+            <Send size={16} /> Send
           </button>
         </form>
 
         <p className="mt-3 text-xs text-mist/60">
-          This is a non-clinical tool. If you are in danger, call local emergency services or a crisis hotline.
+          This is a non-clinical tool. If you are in danger, call local emergency services or a crisis
+          hotline.
         </p>
       </div>
 
-      {/* Summary modal */}
       {summaryOpen && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="glass max-w-lg w-full rounded-xl2 p-5 border border-white/15">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-lg font-semibold">Session summary</h3>
-              <button onClick={()=>setSummaryOpen(false)} className="text-sm opacity-70 hover:opacity-100">Close</button>
+              <button
+                onClick={() => setSummaryOpen(false)}
+                className="text-sm opacity-70 hover:opacity-100"
+              >
+                Close
+              </button>
             </div>
             <div className="space-y-2">
               <ul className="list-disc pl-5">
-                {(summary?.summary || []).map((s,i)=> <li key={i} className="text-mist/90">{s}</li>)}
+                {(summary?.summary || []).map((s, i) => (
+                  <li key={i} className="text-mist/90">
+                    {s}
+                  </li>
+                ))}
               </ul>
               {summary?.nextPrompt && (
                 <div className="mt-2 text-sm">
