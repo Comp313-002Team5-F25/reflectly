@@ -16,20 +16,31 @@ export type SendChatResponse = {
   tags?: string[];
   latencyMs?: number;
   error?: boolean;
+  // in error cases from server we sometimes send these:
+  provider?: string | null;
+  providerStatus?: number | null;
+  providerStatusText?: string | null;
+  providerMessage?: string | null;
 };
 
-// Pull from Vite env and remove trailing slashes
-export const BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '');
+// 1) try Vercel/Vite env
+// 2) otherwise fall back to local API
+const RAW_BASE = import.meta.env.VITE_API_BASE;
+const BASE = (RAW_BASE && RAW_BASE.trim().length > 0
+  ? RAW_BASE
+  : 'http://localhost:4000'
+).replace(/\/+$/, ''); // remove trailing /
 
-// tiny helper in case VITE_API_BASE is missing
 function assertBase() {
-  if (!BASE) {
-    // Don’t throw in dev, just warn so local relative calls still work if you want
-    console.warn('[api] VITE_API_BASE is empty – calls will be relative to the frontend origin.');
+  if (!RAW_BASE || RAW_BASE.trim().length === 0) {
+    // this means prod didn't inject it; we'll still use localhost fallback
+    console.warn(
+      '[api] VITE_API_BASE is empty – using http://localhost:4000. Set VITE_API_BASE in Vercel for production.'
+    );
   }
 }
 
-// POST with timeout + tolerant JSON parsing (works with 204 No Content too)
+// generic POST with timeout; safe for 204
 async function postJSON<T>(url: string, body: unknown, timeoutMs = 15000): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -41,22 +52,27 @@ async function postJSON<T>(url: string, body: unknown, timeoutMs = 15000): Promi
       signal: controller.signal,
     });
 
-    // 204 has no body — avoid throwing on json()
     let data: any = {};
     if (r.status !== 204) {
-      try { data = await r.json(); } catch { data = {}; }
+      try {
+        data = await r.json();
+      } catch {
+        data = {};
+      }
     }
 
     if (!r.ok) {
       throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status, data });
     }
+
     return data as T;
   } finally {
     clearTimeout(timer);
   }
 }
 
-// GET-safe health ping
+// --- public fns -----------------------------------------------------
+
 export async function apiHealth() {
   assertBase();
   try {
@@ -89,8 +105,6 @@ export async function endSession(
 export async function getSummary(sessionId: string): Promise<Summary> {
   assertBase();
   const j = await postJSON<Summary>(`${BASE}/api/summary`, { sessionId });
-
-  // normalize so the UI can rely on arrays existing
   return {
     summary: Array.isArray(j.summary) ? j.summary : [],
     nextPrompt: typeof j.nextPrompt === 'string' ? j.nextPrompt : undefined,

@@ -1,6 +1,7 @@
 // serverless/_lib/cors.js
 export function applyCors(req, res) {
-  // e.g. "https://reflectly-nh3w.vercel.app, http://localhost:5173"
+  // Example value in Vercel:
+  // CORS_ORIGIN="https://reflectly-lfk7.vercel.app,https://reflectly-lfk7-git-main-jeromes-projects-fd1f689c.vercel.app,https://reflectly-lfk7-3h9wox0fb-jeromes-projects-fd1f689c.vercel.app,http://localhost:5173"
   const allowList = (process.env.CORS_ORIGIN || '*')
     .split(',')
     .map(s => s.trim())
@@ -8,12 +9,13 @@ export function applyCors(req, res) {
 
   const origin = req.headers.origin || '';
 
+  // match exact, or allow *
   const allowed =
     allowList.includes('*') ||
     allowList.includes(origin);
 
   if (allowed) {
-    // send back the exact origin so the browser is happy
+    // echo back the exact origin so browser is happy
     res.setHeader('Access-Control-Allow-Origin', origin || allowList[0] || '*');
   } else if (allowList.includes('*')) {
     res.setHeader('Access-Control-Allow-Origin', '*');
