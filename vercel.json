@@ -1,10 +1,15 @@
 {
   "version": 2,
-  "projects": [],
   "builds": [
-    { "src": "serverless/api/**/*.js", "use": "@vercel/node" }
+    {
+      "src": "serverless/api/**/*.js",
+      "use": "@vercel/node"
+    }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "serverless/api/$1.js" }
+    {
+      "src": "/api/(.*)",
+      "dest": "/serverless/api/$1.js"
+    }
   ]
 }
