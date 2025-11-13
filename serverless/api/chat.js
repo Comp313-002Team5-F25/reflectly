@@ -59,15 +59,23 @@ export default async function handler(req, res) {
 
     return res.json(out);
   } catch (err) {
-    console.error('[chat]', err);
-    return res.json({
-      paraphrase: 'I might be having trouble responding right now.',
-      followUp: 'Would you like to try again or share more in a different way?',
-      actionSteps: [],
-      tags: ['Transparency'],
-      error: true,
-      // helpful for you in prod:
-      debug: String(err?.message || err),
-    });
-  }
+  console.error('[chat]', {
+    name: err?.name,
+    status: err?.status,
+    statusText: err?.statusText,
+    message: String(err?.message || err),
+    errorDetails: err?.errorDetails
+  });
+  res.status(200).json({
+    paraphrase: 'I might be having trouble responding right now.',
+    followUp: 'Would you like to try again or share more in a different way?',
+    actionSteps: [],
+    tags: ['Transparency'],
+    error: true,
+    provider: 'google',
+    providerStatus: err?.status ?? null,
+    providerStatusText: err?.statusText ?? null,
+    providerMessage: String(err?.message || '')
+  });
+}
 }
