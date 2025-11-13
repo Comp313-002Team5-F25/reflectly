@@ -1,7 +1,5 @@
 // serverless/_lib/cors.js
 export function applyCors(req, res) {
-  // Example value in Vercel:
-  // CORS_ORIGIN="https://reflectly-lfk7.vercel.app,https://reflectly-lfk7-git-main-jeromes-projects-fd1f689c.vercel.app,https://reflectly-lfk7-3h9wox0fb-jeromes-projects-fd1f689c.vercel.app,http://localhost:5173"
   const allowList = (process.env.CORS_ORIGIN || '*')
     .split(',')
     .map(s => s.trim())
@@ -9,27 +7,48 @@ export function applyCors(req, res) {
 
   const origin = req.headers.origin || '';
 
-  // match exact, or allow *
-  const allowed =
-    allowList.includes('*') ||
-    allowList.includes(origin);
+  // Safe helpers
+  const isLocal =
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
 
-  if (allowed) {
-    // echo back the exact origin so browser is happy
-    res.setHeader('Access-Control-Allow-Origin', origin || allowList[0] || '*');
-  } else if (allowList.includes('*')) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  }
+  let host = '';
+  try { host = origin ? new URL(origin).hostname : ''; } catch { host = ''; }
+  const isVercel = /\.vercel\.app$/i.test(host);
 
+  const allowStar = allowList.includes('*');
+  const allowExact = allowList.includes(origin);
+  // Optional: allow simple prefix matches you might have configured
+  const allowPrefix = allowList.some(p => p && origin.startsWith(p));
+
+  const allowed = allowStar || allowExact || allowPrefix || isLocal || isVercel;
+
+  // Always set the standard CORS headers
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Max-Age', '86400');
 
+  if (allowed) {
+    // Echo exact origin when possible; fall back to * if you configured it
+    res.setHeader('Access-Control-Allow-Origin', allowStar ? '*' : origin || '*');
+  } else {
+    // If not allowed, don't set A-C-A-Origin (browser will block)
+  }
+
+  // Handle preflight early
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.end();
     return true;
   }
   return false;
+}
+
+// Convenience JSON reader for Node serverless
+export async function readJson(req) {
+  if (req.body && typeof req.body !== 'string') return req.body;
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const raw = Buffer.concat(chunks).toString('utf8');
+  try { return JSON.parse(raw || '{}'); } catch { return {}; }
 }
