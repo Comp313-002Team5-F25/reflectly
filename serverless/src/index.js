@@ -1,19 +1,52 @@
-// serverless/src/index.js (or wherever your routes are)
-import fetch from 'node-fetch'; // if not already available
+// serverless/src/index.js
+import fetch from 'node-fetch';
 
 app.get('/api/diag/gemini', async (_req, res) => {
   try {
     const key = (process.env.GEMINI_API_KEY || '').trim();
-    if (!key) return res.status(500).json({ ok:false, reason:'NO_KEY' });
 
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${encodeURIComponent(key)}`);
-    const json = await r.json();
-    if (!r.ok) return res.status(r.status).json({ ok:false, status:r.status, json });
+    if (!key) {
+      return res.status(500).json({
+        ok: false,
+        reason: 'NO_KEY',
+      });
+    }
 
-    // return just the names (no secrets)
-    const names = Array.isArray(json.models) ? json.models.map(m => m.name) : [];
-    res.json({ ok:true, names });
+    const url = `https://generativelanguage.googleapis.com/v1/models?key=${encodeURIComponent(key)}`;
+
+    const r = await fetch(url, { method: 'GET' });
+
+    let json = {};
+    try {
+      json = await r.json();
+    } catch {
+      json = {};
+    }
+
+    if (!r.ok) {
+      return res.status(r.status).json({
+        ok: false,
+        reason: 'GEMINI_REQUEST_FAILED',
+        status: r.status,
+        statusText: r.statusText,
+        json,
+      });
+    }
+
+    const names = Array.isArray(json.models)
+      ? json.models.map((m) => m.name)
+      : [];
+
+    return res.json({
+      ok: true,
+      count: names.length,
+      names,
+    });
   } catch (e) {
-    res.status(500).json({ ok:false, error:String(e) });
+    return res.status(500).json({
+      ok: false,
+      reason: 'SERVER_ERROR',
+      error: String(e),
+    });
   }
 });

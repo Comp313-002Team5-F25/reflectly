@@ -23,27 +23,54 @@ export type SendChatResponse = {
   providerMessage?: string | null;
 };
 
+function normalizeBase(url?: string) {
+  return (url || '').trim().replace(/\/+$/, '');
+}
+
+function isLocalHost() {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+}
+
 // 1) try Vercel/Vite env
-// 2) otherwise fall back to local API
+// 2) if local browser, fall back to local API
+// 3) otherwise fall back to same-origin production/serverless API
 const RAW_BASE = import.meta.env.VITE_API_BASE;
-const BASE = (RAW_BASE && RAW_BASE.trim().length > 0
-  ? RAW_BASE
-  : 'http://localhost:4000'
-).replace(/\/+$/, ''); // remove trailing /
+const BASE = normalizeBase(
+  RAW_BASE && RAW_BASE.trim().length > 0
+    ? RAW_BASE
+    : isLocalHost()
+      ? 'http://localhost:4000'
+      : typeof window !== 'undefined'
+        ? window.location.origin
+        : ''
+);
 
 function assertBase() {
   if (!RAW_BASE || RAW_BASE.trim().length === 0) {
-    // this means prod didn't inject it; we'll still use localhost fallback
-    console.warn(
-      '[api] VITE_API_BASE is empty – using http://localhost:4000. Set VITE_API_BASE in Vercel for production.'
-    );
+    if (isLocalHost()) {
+      console.warn(
+        '[api] VITE_API_BASE is empty – using http://localhost:4000 for local development.'
+      );
+    } else {
+      console.warn(
+        '[api] VITE_API_BASE is empty – using same-origin API. Set VITE_API_BASE only if production API is hosted on a different domain.'
+      );
+    }
   }
+}
+
+function buildUrl(path: string) {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${BASE}${cleanPath}`;
 }
 
 // generic POST with timeout; safe for 204
 async function postJSON<T>(url: string, body: unknown, timeoutMs = 15000): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const r = await fetch(url, {
       method: 'POST',
@@ -76,7 +103,7 @@ async function postJSON<T>(url: string, body: unknown, timeoutMs = 15000): Promi
 export async function apiHealth() {
   assertBase();
   try {
-    const r = await fetch(`${BASE}/api/health`, { method: 'GET' });
+    const r = await fetch(buildUrl('/api/health'), { method: 'GET' });
     return await r.json();
   } catch {
     return { ok: false };
@@ -90,7 +117,7 @@ export async function sendChat(
   intent: Intent
 ): Promise<SendChatResponse> {
   assertBase();
-  return postJSON<SendChatResponse>(`${BASE}/api/chat`, { sessionId, text, tone, intent });
+  return postJSON<SendChatResponse>(buildUrl('/api/chat'), { sessionId, text, tone, intent });
 }
 
 export async function endSession(
@@ -98,13 +125,13 @@ export async function endSession(
   stats: { turns: number; avgLatencyMs: number; errorCount: number; moodDelta?: number | null }
 ) {
   assertBase();
-  await postJSON<void>(`${BASE}/api/session/end`, { sessionId, stats });
+  await postJSON<void>(buildUrl('/api/session/end'), { sessionId, stats });
   return true;
 }
 
 export async function getSummary(sessionId: string): Promise<Summary> {
   assertBase();
-  const j = await postJSON<Summary>(`${BASE}/api/summary`, { sessionId });
+  const j = await postJSON<Summary>(buildUrl('/api/summary'), { sessionId });
   return {
     summary: Array.isArray(j.summary) ? j.summary : [],
     nextPrompt: typeof j.nextPrompt === 'string' ? j.nextPrompt : undefined,
