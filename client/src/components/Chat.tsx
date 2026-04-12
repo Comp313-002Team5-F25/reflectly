@@ -244,7 +244,7 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
             placeholder="Write what’s on your mind…"
             maxLength={280}
             className="flex-1 glass rounded-xl2 px-4 py-3 outline-none focus:ring-2 focus:ring-accent/40"
-            disabled={isSubmitDisabled}
+            disabled={loading}
           />
           <button
             type="submit"
