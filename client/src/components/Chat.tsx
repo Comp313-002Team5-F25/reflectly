@@ -38,6 +38,7 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
   const [errors, setErrors] = useState(0);
   const [loading, setLoading] = useState(false);
 
+  const isSubmitDisabled = loading || !text.trim();
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
 
@@ -176,8 +177,13 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
   return (
     <section id="chat" className="max-w-4xl mx-auto px-6 -mt-16 relative">
       <div className="glass rounded-xl2 p-4 md:p-6 shadow-soft border border-white/10">
-        <header className="flex items-center justify-between gap-4 mb-3">
-          <h2 className="text-xl font-medium">Conversation</h2>
+        <header className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h2 className="text-xl font-medium">Reflection Journal</h2>
+            <p className="text-sm text-mist/70 mt-1">
+              Capture a thought and explore it more deeply.
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={onSummary}
@@ -235,18 +241,24 @@ export default function Chat({ tone, intent }: { tone: Tone; intent: Intent }) {
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Type a thought…"
+            placeholder="Write what’s on your mind…"
+            maxLength={280}
             className="flex-1 glass rounded-xl2 px-4 py-3 outline-none focus:ring-2 focus:ring-accent/40"
-            disabled={loading}
+            disabled={isSubmitDisabled}
           />
           <button
             type="submit"
-            disabled={loading}
+            disabled={isSubmitDisabled}
             className="px-4 py-3 rounded-xl2 bg-accent text-ink hover:opacity-90 transition inline-flex items-center gap-2 disabled:opacity-50"
           >
-            <Send size={16} /> Send
+            <Send size={16} /> Reflect
           </button>
         </form>
+
+        <div className="mt-2 flex justify-between text-xs text-mist/60">
+          <span>Try a feeling, thought, or situation you want to unpack.</span>
+          <span>{text.length}/280</span>
+        </div>
 
         <p className="mt-3 text-xs text-mist/60">
           This is a non-clinical tool. If you are in danger, call local emergency services or a crisis
